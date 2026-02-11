@@ -8,7 +8,7 @@ const SHOPIFY_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN; // Vercel env variable
 
 // ─── CORS HEADERS ───
 const corsHeaders = {
-  'Access-Control-Allow-Origin': '*', // Prod'da domain kısıtla
+  'Access-Control-Allow-Origin': 'https://colorbox.com.tr',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type',
 };
@@ -186,11 +186,13 @@ async function createVariantWithPrice(price, en, boy, saseCinsi, bezCinsi) {
 // ─── ANA HANDLER ───
 export default async function handler(req, res) {
   // CORS preflight
+// CORS headers for all responses
+  res.setHeader('Access-Control-Allow-Origin', 'https://colorbox.com.tr');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
   if (req.method === 'OPTIONS') {
-    return res.status(200).setHeader('Access-Control-Allow-Origin', '*')
-      .setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
-      .setHeader('Access-Control-Allow-Headers', 'Content-Type')
-      .end();
+    return res.status(200).end();
   }
 
   if (req.method !== 'POST') {
