@@ -252,6 +252,10 @@ export default async function handler(req, res) {
 
   } catch (err) {
     console.error('[Tuval API Error]', err);
-    return res.status(500).json({ error: 'Hesaplama hatası' });
+    return res.status(500).json({ error: 'Hesaplama hatası', detail: err.message });
   }
-}
+```
+
+Commit et, 30 saniye bekle, sonra aynı curl komutunu tekrar çalıştır:
+```
+curl -s -X POST "https://mtvs-tuval-api.vercel.app/api/hesapla" -H "Content-Type: application/json" -d "{\"en\":120,\"boy\":240,\"sase\":\"1,7x2,8\",\"bez\":\"320gr Pamuk\",\"action\":\"add_to_cart\"}"
