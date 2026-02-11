@@ -1,20 +1,17 @@
 // /api/hesapla.js — Tuval Fiyat Hesaplama Backend (v3)
-// Vercel Serverless Function — CommonJS format
+// Vercel Serverless Function — CommonJS
 
-const SHOPIFY_STORE = 'cbx25.myshopify.com';
-const SHOPIFY_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
-const PRODUCT_ID = '10400727662886';
+var SHOPIFY_STORE = 'cbx25.myshopify.com';
+var SHOPIFY_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
+var PRODUCT_ID = '10400727662886';
 
-// ─── SHOPIFY'DAN METAOBJECTLERİ ÇEK ───
+// ─── SHOPIFY METAOBJECT ÇEK ───
 async function fetchMetaobjects() {
   var query = '{ saseList: metaobjects(type: "sase_tipi", first: 50) { nodes { handle fields { key value } } } bezList: metaobjects(type: "bez_tipi", first: 50) { nodes { handle fields { key value } } } sabitler: metaobjects(type: "tuval_sabitler", first: 1) { nodes { fields { key value } } } }';
 
   var res = await fetch('https://' + SHOPIFY_STORE + '/admin/api/2025-01/graphql.json', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Shopify-Access-Token': SHOPIFY_TOKEN,
-    },
+    headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': SHOPIFY_TOKEN },
     body: JSON.stringify({ query: query }),
   });
 
@@ -23,7 +20,7 @@ async function fetchMetaobjects() {
   return data.data;
 }
 
-// ─── METAOBJECT PARSE ───
+// ─── PARSE ───
 function parseFields(nodes, keyField) {
   var result = {};
   for (var i = 0; i < nodes.length; i++) {
@@ -58,7 +55,7 @@ function parseSabitler(nodes) {
   return sabit;
 }
 
-// ─── HESAPLAMA MOTORU ───
+// ─── HESAPLAMA ───
 function getKayitAdet(cm, segmentler) {
   for (var i = 0; i < segmentler.length; i++) {
     if (cm >= segmentler[i].min && cm <= segmentler[i].max) return segmentler[i].adet;
@@ -71,7 +68,7 @@ function bezBirimFiyatTL(bezConfig, usdKuru) {
   return usdKuru * bezConfig.usd_m2 * 10 / bezConfig.bolum;
 }
 
-function hesaplaTuvalFiyat(en, boy, saseConfig, bezConfig, sabitler) {
+function hesapla(en, boy, saseConfig, bezConfig, sabitler) {
   var saseMetre = ((en + boy) * 2 * (1 + sabitler.fire_orani)) / 100;
   var saseMaliyet = saseMetre * saseConfig.birim_fiyat;
 
@@ -79,73 +76,53 @@ function hesaplaTuvalFiyat(en, boy, saseConfig, bezConfig, sabitler) {
   var bezBirimTL = bezBirimFiyatTL(bezConfig, sabitler.usd_kuru);
   var bezMaliyet = bezM2 * bezBirimTL;
 
-  var enKayitAdet = getKayitAdet(en, sabitler.kayit_segmentleri);
-  var boyKayitAdet = getKayitAdet(boy, sabitler.kayit_segmentleri);
-  var kayitMetre = ((boyKayitAdet * en) + (boy * enKayitAdet)) / 100;
+  var enKayit = getKayitAdet(en, sabitler.kayit_segmentleri);
+  var boyKayit = getKayitAdet(boy, sabitler.kayit_segmentleri);
+  var kayitMetre = ((boyKayit * en) + (boy * enKayit)) / 100;
   var kayitMaliyet = kayitMetre * saseConfig.kayit_birim;
 
   var iscilik = saseMetre * sabitler.iscilik_birim;
-
   var malzeme = saseMaliyet + bezMaliyet + kayitMaliyet;
-  var memberFiyat = Math.round(
-    ((malzeme * sabitler.kar_carpani) + iscilik) * (1 + sabitler.kdv_orani) * 10
-  ) / 10;
+  var fiyat = Math.round(((malzeme * sabitler.kar_carpani) + iscilik) * (1 + sabitler.kdv_orani) * 10) / 10;
 
-  return { fiyat: memberFiyat, kayitAdet: enKayitAdet + boyKayitAdet };
+  return { fiyat: fiyat, kayitAdet: enKayit + boyKayit };
 }
 
-// ─── ÜRÜNE GÖRSEL EKLE VE VARIANT'A BAĞLA ───
-async function addImageToVariant(variantId, en, boy, saseCinsi, bezCinsi) {
-  // Orantılı görsel boyutu (max 600px, en-boy oranı korunur)
+// ─── GÖRSEL EKLE ───
+async function addImageToVariant(variantId, en, boy) {
   var maxPx = 600;
   var ratio = en / boy;
   var imgW, imgH;
-  if (ratio >= 1) {
-    imgW = maxPx;
-    imgH = Math.round(maxPx / ratio);
-  } else {
-    imgH = maxPx;
-    imgW = Math.round(maxPx * ratio);
-  }
+  if (ratio >= 1) { imgW = maxPx; imgH = Math.round(maxPx / ratio); }
+  else { imgH = maxPx; imgW = Math.round(maxPx * ratio); }
 
-  var text = en + 'x' + boy + 'cm\n' + saseCinsi + '\n' + bezCinsi;
+  var text = en + 'x' + boy + 'cm';
   var imageUrl = 'https://placehold.co/' + imgW + 'x' + imgH + '/1a1a2e/ffffff?text=' + encodeURIComponent(text);
 
-  var res = await fetch(
-    'https://' + SHOPIFY_STORE + '/admin/api/2025-01/products/' + PRODUCT_ID + '/images.json',
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Shopify-Access-Token': SHOPIFY_TOKEN,
-      },
-      body: JSON.stringify({
-        image: {
-          src: imageUrl,
-          alt: en + 'x' + boy + ' cm ' + saseCinsi + ' ' + bezCinsi,
-          variant_ids: [parseInt(variantId, 10)],
-        }
-      }),
-    }
-  );
-
-  var data = await res.json();
-  return data.image ? data.image.id : null;
+  await fetch('https://' + SHOPIFY_STORE + '/admin/api/2025-01/products/' + PRODUCT_ID + '/images.json', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': SHOPIFY_TOKEN },
+    body: JSON.stringify({
+      image: {
+        src: imageUrl,
+        alt: en + 'x' + boy + ' cm tuval',
+        variant_ids: [parseInt(variantId, 10)],
+      }
+    }),
+  });
 }
 
-// ─── MEVCUT VARIANTLARI ÇEK ───
+// ─── MEVCUT VARIANTLAR ───
 async function getExistingVariants() {
   var res = await fetch(
     'https://' + SHOPIFY_STORE + '/admin/api/2025-01/products/' + PRODUCT_ID + '/variants.json?limit=250',
-    {
-      headers: { 'X-Shopify-Access-Token': SHOPIFY_TOKEN },
-    }
+    { headers: { 'X-Shopify-Access-Token': SHOPIFY_TOKEN } }
   );
   var data = await res.json();
   return data.variants || [];
 }
 
-// ─── ESKİ VARIANTLARI TEMİZLE (Default Title hariç, 7 günden eski) ───
+// ─── ESKİ VARIANT TEMİZLE (7 gün) ───
 async function cleanOldVariants(variants) {
   var now = Date.now();
   var SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
@@ -153,127 +130,72 @@ async function cleanOldVariants(variants) {
   for (var i = 0; i < variants.length; i++) {
     var v = variants[i];
     if (v.title === 'Default Title') continue;
-
-    var createdAt = new Date(v.created_at).getTime();
-    if (now - createdAt > SEVEN_DAYS) {
+    if (now - new Date(v.created_at).getTime() > SEVEN_DAYS) {
       try {
         if (v.image_id) {
-          await fetch(
-            'https://' + SHOPIFY_STORE + '/admin/api/2025-01/products/' + PRODUCT_ID + '/images/' + v.image_id + '.json',
-            {
-              method: 'DELETE',
-              headers: { 'X-Shopify-Access-Token': SHOPIFY_TOKEN },
-            }
-          );
+          await fetch('https://' + SHOPIFY_STORE + '/admin/api/2025-01/products/' + PRODUCT_ID + '/images/' + v.image_id + '.json', {
+            method: 'DELETE', headers: { 'X-Shopify-Access-Token': SHOPIFY_TOKEN },
+          });
         }
-        await fetch(
-          'https://' + SHOPIFY_STORE + '/admin/api/2025-01/products/' + PRODUCT_ID + '/variants/' + v.id + '.json',
-          {
-            method: 'DELETE',
-            headers: { 'X-Shopify-Access-Token': SHOPIFY_TOKEN },
-          }
-        );
-      } catch (e) {
-        // Silme hatasi onemsiz
-      }
+        await fetch('https://' + SHOPIFY_STORE + '/admin/api/2025-01/products/' + PRODUCT_ID + '/variants/' + v.id + '.json', {
+          method: 'DELETE', headers: { 'X-Shopify-Access-Token': SHOPIFY_TOKEN },
+        });
+      } catch (e) { /* sessizce devam */ }
     }
   }
 }
 
-// ─── DİNAMİK VARIANT OLUŞTUR ───
-async function createVariantWithPrice(price, en, boy, saseCinsi, bezCinsi) {
+// ─── VARIANT OLUŞTUR / GÜNCELLE ───
+async function getOrCreateVariant(price, en, boy, saseCinsi, bezCinsi) {
   var optionValue = en + 'x' + boy + ' ' + saseCinsi + ' ' + bezCinsi;
-
   var variants = await getExistingVariants();
 
-  // Arka planda eski variantları temizle
+  // Arka planda temizlik
   cleanOldVariants(variants).catch(function() {});
 
-  // Aynı option value ile variant var mı?
+  // Mevcut variant var mı?
   var existing = null;
   for (var i = 0; i < variants.length; i++) {
-    if (variants[i].option1 === optionValue) {
-      existing = variants[i];
-      break;
-    }
+    if (variants[i].option1 === optionValue) { existing = variants[i]; break; }
   }
 
   if (existing) {
-    // Fiyatı güncelle
-    var res = await fetch(
-      'https://' + SHOPIFY_STORE + '/admin/api/2025-01/variants/' + existing.id + '.json',
-      {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Shopify-Access-Token': SHOPIFY_TOKEN,
-        },
-        body: JSON.stringify({
-          variant: { id: existing.id, price: price.toFixed(2) }
-        }),
-      }
-    );
+    var res = await fetch('https://' + SHOPIFY_STORE + '/admin/api/2025-01/variants/' + existing.id + '.json', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': SHOPIFY_TOKEN },
+      body: JSON.stringify({ variant: { id: existing.id, price: price.toFixed(2) } }),
+    });
     var data = await res.json();
-    return {
-      variantId: data.variant.id.toString(),
-      price: data.variant.price,
-      title: data.variant.title,
-    };
+    return { variantId: data.variant.id.toString(), price: data.variant.price };
   }
 
   // Yeni oluştur
-  var res2 = await fetch(
-    'https://' + SHOPIFY_STORE + '/admin/api/2025-01/products/' + PRODUCT_ID + '/variants.json',
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Shopify-Access-Token': SHOPIFY_TOKEN,
-      },
-      body: JSON.stringify({
-        variant: {
-          option1: optionValue,
-          price: price.toFixed(2),
-          inventory_policy: 'continue',
-          inventory_management: null,
-        }
-      }),
-    }
-  );
-
+  var res2 = await fetch('https://' + SHOPIFY_STORE + '/admin/api/2025-01/products/' + PRODUCT_ID + '/variants.json', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': SHOPIFY_TOKEN },
+    body: JSON.stringify({
+      variant: { option1: optionValue, price: price.toFixed(2), inventory_policy: 'continue', inventory_management: null }
+    }),
+  });
   var data2 = await res2.json();
 
-  if (data2.errors) {
-    throw new Error(JSON.stringify(data2.errors));
-  }
+  if (data2.errors) throw new Error(JSON.stringify(data2.errors));
+  if (!data2.variant) throw new Error('Variant olusturulamadi');
 
-  if (!data2.variant) {
-    throw new Error('Variant olusturulamadi: ' + JSON.stringify(data2));
-  }
+  // Arka planda görsel ekle
+  addImageToVariant(data2.variant.id.toString(), en, boy).catch(function() {});
 
-  // Görseli arka planda ekle
-  addImageToVariant(data2.variant.id.toString(), en, boy, saseCinsi, bezCinsi).catch(function() {});
-
-  return {
-    variantId: data2.variant.id.toString(),
-    price: data2.variant.price,
-    title: data2.variant.title,
-  };
+  return { variantId: data2.variant.id.toString(), price: data2.variant.price };
 }
 
-// ─── ANA HANDLER ───
+// ─── HANDLER ───
 module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', 'https://colorbox.com.tr');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
-
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
+  if (req.method === 'OPTIONS') return res.status(200).end();
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   try {
     var en = req.body.en;
@@ -282,9 +204,7 @@ module.exports = async function handler(req, res) {
     var bez = req.body.bez;
     var action = req.body.action;
 
-    if (!en || !boy || !sase || !bez) {
-      return res.status(400).json({ error: 'Eksik parametre' });
-    }
+    if (!en || !boy || !sase || !bez) return res.status(400).json({ error: 'Eksik parametre' });
 
     var enNum = parseInt(en, 10);
     var boyNum = parseInt(boy, 10);
@@ -301,28 +221,17 @@ module.exports = async function handler(req, res) {
     var saseConfig = saseTipleri[sase];
     var bezConfig = bezTipleri[bez];
 
-    if (!saseConfig) {
-      return res.status(400).json({ error: 'Gecersiz sase: ' + sase });
-    }
-    if (!bezConfig) {
-      return res.status(400).json({ error: 'Gecersiz bez: ' + bez });
-    }
+    if (!saseConfig) return res.status(400).json({ error: 'Gecersiz sase: ' + sase });
+    if (!bezConfig) return res.status(400).json({ error: 'Gecersiz bez: ' + bez });
 
-    var result = hesaplaTuvalFiyat(enNum, boyNum, saseConfig, bezConfig, sabitler);
+    var result = hesapla(enNum, boyNum, saseConfig, bezConfig, sabitler);
 
     if (action === 'add_to_cart') {
-      var variant = await createVariantWithPrice(result.fiyat, enNum, boyNum, sase, bez);
-      return res.status(200).json({
-        fiyat: result.fiyat,
-        kayitAdet: result.kayitAdet,
-        variantId: variant.variantId,
-      });
+      var variant = await getOrCreateVariant(result.fiyat, enNum, boyNum, sase, bez);
+      return res.status(200).json({ fiyat: result.fiyat, kayitAdet: result.kayitAdet, variantId: variant.variantId });
     }
 
-    return res.status(200).json({
-      fiyat: result.fiyat,
-      kayitAdet: result.kayitAdet,
-    });
+    return res.status(200).json({ fiyat: result.fiyat, kayitAdet: result.kayitAdet });
 
   } catch (err) {
     console.error('[Tuval API Error]', err);
