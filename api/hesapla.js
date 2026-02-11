@@ -1,37 +1,20 @@
-// /api/hesapla.js — Tuval Fiyat Hesaplama Backend
-// Vercel Serverless Function
-// Frontend'e sadece nihai fiyat döner, maliyet detayları gizli kalır.
+// /api/hesapla.js — Tuval Fiyat Hesaplama Backend (v2)
+// Vercel Serverless Function — CommonJS format
 
-// ─── SABİTLER (Shopify metaobject'ten de çekilebilir, şimdilik hardcode) ───
 const SHOPIFY_STORE = 'cbx25.myshopify.com';
-const SHOPIFY_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN; // Vercel env variable
-
-// ─── CORS HEADERS ───
-const corsHeaders = {
-  'Access-Control-Allow-Origin': 'https://colorbox.com.tr',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
-};
+const SHOPIFY_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
 
 // ─── SHOPIFY'DAN METAOBJECTLERİ ÇEK ───
 async function fetchMetaobjects() {
   const query = `{
     saseList: metaobjects(type: "sase_tipi", first: 50) {
-      nodes {
-        handle
-        fields { key value }
-      }
+      nodes { handle fields { key value } }
     }
     bezList: metaobjects(type: "bez_tipi", first: 50) {
-      nodes {
-        handle
-        fields { key value }
-      }
+      nodes { handle fields { key value } }
     }
     sabitler: metaobjects(type: "tuval_sabitler", first: 1) {
-      nodes {
-        fields { key value }
-      }
+      nodes { fields { key value } }
     }
   }`;
 
@@ -44,7 +27,7 @@ async function fetchMetaobjects() {
     body: JSON.stringify({ query }),
   });
 
-  if (!res.ok) throw new Error(`Shopify API error: ${res.status}`);
+  if (!res.ok) throw new Error('Shopify API error: ' + res.status);
   const data = await res.json();
   return data.data;
 }
@@ -81,7 +64,7 @@ function parseSabitler(nodes) {
   return sabit;
 }
 
-// ─── HESAPLAMA MOTORU (Frontend'dekiyle aynı mantık) ───
+// ─── HESAPLAMA MOTORU ───
 function getKayitAdet(cm, segmentler) {
   for (const seg of segmentler) {
     if (cm >= seg.min && cm <= seg.max) return seg.adet;
@@ -90,103 +73,76 @@ function getKayitAdet(cm, segmentler) {
 }
 
 function bezBirimFiyatTL(bezConfig, usdKuru) {
-  if (bezConfig.formul === 'direkt_tl') {
-    return bezConfig.usd_m2;
-  }
+  if (bezConfig.formul === 'direkt_tl') return bezConfig.usd_m2;
   return usdKuru * bezConfig.usd_m2 * 10 / bezConfig.bolum;
 }
 
 function hesaplaTuvalFiyat(en, boy, saseConfig, bezConfig, sabitler) {
-  // ADIM 1-2: Şase
   const saseMetre = ((en + boy) * 2 * (1 + sabitler.fire_orani)) / 100;
   const saseMaliyet = saseMetre * saseConfig.birim_fiyat;
 
-  // ADIM 3-4: Bez
   const bezM2 = ((boy + saseConfig.bez_payi) * (en + saseConfig.bez_payi)) / 10000;
   const bezBirimTL = bezBirimFiyatTL(bezConfig, sabitler.usd_kuru);
   const bezMaliyet = bezM2 * bezBirimTL;
 
-  // ADIM 5-6: Kayıt
   const enKayitAdet = getKayitAdet(en, sabitler.kayit_segmentleri);
   const boyKayitAdet = getKayitAdet(boy, sabitler.kayit_segmentleri);
   const kayitMetre = ((boyKayitAdet * en) + (boy * enKayitAdet)) / 100;
   const kayitMaliyet = kayitMetre * saseConfig.kayit_birim;
 
-  // ADIM 7: İşçilik
   const iscilik = saseMetre * sabitler.iscilik_birim;
 
-  // ADIM 8: Nihai fiyat
   const malzeme = saseMaliyet + bezMaliyet + kayitMaliyet;
   const memberFiyat = Math.round(
     ((malzeme * sabitler.kar_carpani) + iscilik) * (1 + sabitler.kdv_orani) * 10
   ) / 10;
 
-  return {
-    fiyat: memberFiyat,
-    kayitAdet: enKayitAdet + boyKayitAdet,
-  };
+  return { fiyat: memberFiyat, kayitAdet: enKayitAdet + boyKayitAdet };
 }
 
-// ─── DİNAMİK VARIANT OLUŞTUR ───
+// ─── DİNAMİK VARIANT OLUŞTUR (REST API) ───
 async function createVariantWithPrice(price, en, boy, saseCinsi, bezCinsi) {
-  const PRODUCT_ID = 'gid://shopify/Product/10400727662886';
+  const PRODUCT_ID = '10400727662886';
 
-  // Önce mevcut geçici variantları temizle (opsiyonel, ileride eklenebilir)
-
-  const mutation = `mutation {
-    productVariantsBulkCreate(
-      productId: "${PRODUCT_ID}",
-      strategy: REMOVE_STANDALONE_VARIANT,
-      variants: [{
-        price: "${price.toFixed(2)}",
-        optionValues: [{
-          optionName: "Ebat",
-          name: "${en}x${boy} ${saseCinsi} ${bezCinsi}"
-        }],
-        inventoryPolicy: CONTINUE
-      }]
-    ) {
-      productVariants {
-        id
-        title
-        price
-      }
-      userErrors {
-        field
-        message
-      }
+  const res = await fetch(
+    `https://${SHOPIFY_STORE}/admin/api/2025-01/products/${PRODUCT_ID}/variants.json`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Shopify-Access-Token': SHOPIFY_TOKEN,
+      },
+      body: JSON.stringify({
+        variant: {
+          option1: en + 'x' + boy + ' ' + saseCinsi + ' ' + bezCinsi,
+          price: price.toFixed(2),
+          inventory_policy: 'continue',
+          inventory_management: null,
+        }
+      }),
     }
-  }`;
-
-  const res = await fetch(`https://${SHOPIFY_STORE}/admin/api/2025-01/graphql.json`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Shopify-Access-Token': SHOPIFY_TOKEN,
-    },
-    body: JSON.stringify({ query: mutation }),
-  });
+  );
 
   const data = await res.json();
 
-  if (data.data?.productVariantsBulkCreate?.userErrors?.length > 0) {
-    throw new Error(data.data.productVariantsBulkCreate.userErrors[0].message);
+  if (data.errors) {
+    throw new Error(JSON.stringify(data.errors));
   }
 
-  const variant = data.data?.productVariantsBulkCreate?.productVariants?.[0];
-  if (!variant) throw new Error('Variant oluşturulamadı');
+  if (!data.variant) {
+    throw new Error('Variant olusturulamadi: ' + JSON.stringify(data));
+  }
 
   return {
-    variantId: variant.id.replace('gid://shopify/ProductVariant/', ''),
-    price: variant.price,
-    title: variant.title,
+    variantId: data.variant.id.toString(),
+    price: data.variant.price,
+    title: data.variant.title,
   };
 }
 
 // ─── ANA HANDLER ───
-export default async function handler(req, res) {
-  // CORS preflight
-// CORS headers for all responses
+module.exports = async function handler(req, res) {
+  // CORS
   res.setHeader('Access-Control-Allow-Origin', 'https://colorbox.com.tr');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -202,7 +158,6 @@ export default async function handler(req, res) {
   try {
     const { en, boy, sase, bez, action } = req.body;
 
-    // Validasyon
     if (!en || !boy || !sase || !bez) {
       return res.status(400).json({ error: 'Eksik parametre' });
     }
@@ -211,10 +166,9 @@ export default async function handler(req, res) {
     const boyNum = parseInt(boy, 10);
 
     if (isNaN(enNum) || isNaN(boyNum) || enNum < 10 || enNum > 350 || boyNum < 10 || boyNum > 350) {
-      return res.status(400).json({ error: 'Geçersiz ebat (10-350 cm)' });
+      return res.status(400).json({ error: 'Gecersiz ebat (10-350 cm)' });
     }
 
-    // Shopify'dan güncel verileri çek
     const rawData = await fetchMetaobjects();
     const saseTipleri = parseFields(rawData.saseList.nodes, 'ad');
     const bezTipleri = parseFields(rawData.bezList.nodes, 'ad');
@@ -224,18 +178,15 @@ export default async function handler(req, res) {
     const bezConfig = bezTipleri[bez];
 
     if (!saseConfig) {
-      return res.status(400).json({ error: `Geçersiz şase: ${sase}` });
+      return res.status(400).json({ error: 'Gecersiz sase: ' + sase });
     }
     if (!bezConfig) {
-      return res.status(400).json({ error: `Geçersiz bez: ${bez}` });
+      return res.status(400).json({ error: 'Gecersiz bez: ' + bez });
     }
 
-    // Hesapla
     const result = hesaplaTuvalFiyat(enNum, boyNum, saseConfig, bezConfig, sabitler);
 
-    // Sadece fiyat hesaplama mı, yoksa sepete ekleme mi?
     if (action === 'add_to_cart') {
-      // Dinamik variant oluştur
       const variant = await createVariantWithPrice(result.fiyat, enNum, boyNum, sase, bez);
       return res.status(200).json({
         fiyat: result.fiyat,
@@ -244,7 +195,6 @@ export default async function handler(req, res) {
       });
     }
 
-    // Sadece fiyat dön — maliyet detayı YOK
     return res.status(200).json({
       fiyat: result.fiyat,
       kayitAdet: result.kayitAdet,
@@ -252,10 +202,6 @@ export default async function handler(req, res) {
 
   } catch (err) {
     console.error('[Tuval API Error]', err);
-    return res.status(500).json({ error: 'Hesaplama hatası', detail: err.message });
+    return res.status(500).json({ error: 'Hesaplama hatasi', detail: err.message });
   }
-```
-
-Commit et, 30 saniye bekle, sonra aynı curl komutunu tekrar çalıştır:
-```
-curl -s -X POST "https://mtvs-tuval-api.vercel.app/api/hesapla" -H "Content-Type: application/json" -d "{\"en\":120,\"boy\":240,\"sase\":\"1,7x2,8\",\"bez\":\"320gr Pamuk\",\"action\":\"add_to_cart\"}"
+};
