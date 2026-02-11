@@ -182,8 +182,8 @@ async function getOrCreateVariant(price, en, boy, saseCinsi, bezCinsi) {
   if (data2.errors) throw new Error(JSON.stringify(data2.errors));
   if (!data2.variant) throw new Error('Variant olusturulamadi');
 
-  // Arka planda görsel ekle
-  addImageToVariant(data2.variant.id.toString(), en, boy).catch(function() {});
+ // Görsel ekle (response'tan önce)
+  try { await addImageToVariant(data2.variant.id.toString(), en, boy); } catch(e) {}
 
   return { variantId: data2.variant.id.toString(), price: data2.variant.price };
 }
