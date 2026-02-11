@@ -97,7 +97,7 @@ async function addImageToVariant(variantId, en, boy) {
   else { imgH = maxPx; imgW = Math.round(maxPx * ratio); }
 
   var text = en + 'x' + boy + 'cm';
-  var imageUrl = 'https://dummyimage.com/' + imgW + 'x' + imgH + '/DBDAD6/000000.png&text=' + encodeURIComponent(text);
+  var imageUrl = 'https://dummyimage.com/' + imgW + 'x' + imgH + '/F3F3F3/000000.png&text=' + encodeURIComponent(text);
 
   await fetch('https://' + SHOPIFY_STORE + '/admin/api/2025-01/products/' + PRODUCT_ID + '/images.json', {
     method: 'POST',
