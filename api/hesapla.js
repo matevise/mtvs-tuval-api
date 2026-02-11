@@ -183,7 +183,7 @@ async function getOrCreateVariant(price, en, boy, saseCinsi, bezCinsi) {
   if (!data2.variant) throw new Error('Variant olusturulamadi');
 
  // Görsel ekle (response'tan önce)
-  try { await addImageToVariant(data2.variant.id.toString(), en, boy); } catch(e) {}
+addImageToVariant(data2.variant.id.toString(), en, boy).catch(function() {});
 
   return { variantId: data2.variant.id.toString(), price: data2.variant.price };
 }
